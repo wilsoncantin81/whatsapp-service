@@ -23,6 +23,44 @@ let sock = null;
 let isReady = false;
 let qrString = null;
 
+// Mensajes enviados recientemente. Si el celular de quien recibe no logra descifrar un mensaje,
+// WhatsApp pide reenviarlo; sin esta memoria el destinatario se queda en "Esperando el mensaje".
+const SENT_CACHE_MAX = 2000;
+const sentMessages = new Map();
+function rememberSent(msg) {
+  if (!msg?.key?.id || !msg.message) return;
+  sentMessages.set(msg.key.id, msg.message);
+  if (sentMessages.size > SENT_CACHE_MAX) sentMessages.delete(sentMessages.keys().next().value);
+}
+// Contador de reintentos de descifrado por mensaje (lo usa Baileys internamente)
+const retryCounts = new Map();
+const msgRetryCounterCache = {
+  get: (k) => retryCounts.get(k),
+  set: (k, v) => { retryCounts.set(k, v); if (retryCounts.size > SENT_CACHE_MAX) retryCounts.delete(retryCounts.keys().next().value); },
+  del: (k) => retryCounts.delete(k),
+  flushAll: () => retryCounts.clear(),
+};
+
+/** Normaliza el número y confirma que tenga WhatsApp. Devuelve el JID o null. */
+async function resolveJid(to) {
+  const digits = String(to).replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 15) return null;
+  const [result] = await sock.onWhatsApp(`${digits}@s.whatsapp.net`);
+  return result?.exists ? result.jid : null;
+}
+
+async function sendText(to, message) {
+  const jid = await resolveJid(to);
+  if (!jid) {
+    const err = new Error('El número no tiene WhatsApp o es inválido');
+    err.status = 400;
+    throw err;
+  }
+  const sent = await sock.sendMessage(jid, { text: message });
+  rememberSent(sent);
+  return jid;
+}
+
 // ── Auth middleware ──────────────────────────────────────────────────
 function authMiddleware(req, res, next) {
   if (!API_SECRET) return next(); // sin secret configurado → abierto (solo dev)
@@ -45,6 +83,11 @@ async function connectToWhatsApp() {
     },
     printQRInTerminal: false,
     browser: ['Gipfel IT', 'Chrome', '1.0'],
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
+    msgRetryCounterCache,
+    // Reenvío cuando el destinatario pide de nuevo el mensaje (evita "Esperando el mensaje")
+    getMessage: async (key) => sentMessages.get(key.id),
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -97,14 +140,14 @@ app.get('/', (req, res) => {
 });
 
 // Ver QR en texto (para copiarlo)
-app.get('/qr', (req, res) => {
+app.get('/qr', authMiddleware, (req, res) => {
   if (isReady) return res.json({ status: 'already_connected' });
   if (!qrString) return res.json({ status: 'waiting_for_qr', message: 'Espera unos segundos y recarga' });
   res.json({ status: 'scan_qr', qr: qrString });
 });
 
 // Ver QR como imagen HTML (fácil de escanear desde el celular)
-app.get('/qr-image', async (req, res) => {
+app.get('/qr-image', authMiddleware, async (req, res) => {
   if (isReady) return res.send('<html><body style="background:#000;color:#0f0;font-family:sans-serif;text-align:center;padding:40px"><h2>✅ WhatsApp ya está conectado!</h2></body></html>');
   if (!qrString) return res.send('<html><body style="background:#000;color:#fff;font-family:sans-serif;text-align:center;padding:40px"><h2>⏳ Esperando QR...</h2><p>Recarga en 5 segundos</p><script>setTimeout(()=>location.reload(),5000)</script></body></html>');
   try {
@@ -127,16 +170,13 @@ app.post('/send', authMiddleware, async (req, res) => {
   }
 
   try {
-    // Normalizar número: solo dígitos, agregar @s.whatsapp.net
-    const digits = to.replace(/\D/g, '');
-    const jid = digits.includes('@') ? digits : `${digits}@s.whatsapp.net`;
-
-    await sock.sendMessage(jid, { text: message });
+    const jid = await sendText(to, message);
+    const digits = jid.split('@')[0];
     console.log(`📤 Enviado a ${digits}: ${message.substring(0, 60)}…`);
     res.json({ ok: true, to: digits });
   } catch (err) {
     console.error('Error enviando mensaje:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -149,10 +189,8 @@ app.post('/send-batch', authMiddleware, async (req, res) => {
   const results = [];
   for (const { to, message } of messages) {
     try {
-      const digits = to.replace(/\D/g, '');
-      const jid = `${digits}@s.whatsapp.net`;
-      await sock.sendMessage(jid, { text: message });
-      results.push({ to: digits, ok: true });
+      const jid = await sendText(to, message);
+      results.push({ to: jid.split('@')[0], ok: true });
       await new Promise(r => setTimeout(r, 500)); // pequeña pausa entre mensajes
     } catch (err) {
       results.push({ to, ok: false, error: err.message });
