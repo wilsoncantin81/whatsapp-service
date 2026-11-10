@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y git --no-install-recommends && rm -rf /
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install --production
+RUN npm install --production --ignore-scripts
 
 COPY index.js ./
 

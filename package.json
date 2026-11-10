@@ -8,10 +8,11 @@
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.5.0",
+    "@whiskeysockets/baileys": "6.4.0",
     "cors": "^2.8.6",
     "express": "^4.22.3",
     "pino": "^9.14.0",
+    "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0"
   }
 }

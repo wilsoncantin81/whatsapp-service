@@ -6,6 +6,7 @@ const {
   makeCacheableSignalKeyStore,
 } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const express = require('express');
 const cors = require('cors');
 const { Boom } = require('@hapi/boom');
@@ -100,6 +101,18 @@ app.get('/qr', (req, res) => {
   if (isReady) return res.json({ status: 'already_connected' });
   if (!qrString) return res.json({ status: 'waiting_for_qr', message: 'Espera unos segundos y recarga' });
   res.json({ status: 'scan_qr', qr: qrString });
+});
+
+// Ver QR como imagen HTML (fácil de escanear desde el celular)
+app.get('/qr-image', async (req, res) => {
+  if (isReady) return res.send('<html><body style="background:#000;color:#0f0;font-family:sans-serif;text-align:center;padding:40px"><h2>✅ WhatsApp ya está conectado!</h2></body></html>');
+  if (!qrString) return res.send('<html><body style="background:#000;color:#fff;font-family:sans-serif;text-align:center;padding:40px"><h2>⏳ Esperando QR...</h2><p>Recarga en 5 segundos</p><script>setTimeout(()=>location.reload(),5000)</script></body></html>');
+  try {
+    const dataUrl = await QRCode.toDataURL(qrString, { width: 400, margin: 2 });
+    res.send(`<html><head><meta http-equiv="refresh" content="20"></head><body style="background:#fff;text-align:center;padding:20px;font-family:sans-serif"><h2>Escanea con WhatsApp Business</h2><p>Dispositivos vinculados → Vincular dispositivo</p><img src="${dataUrl}" style="width:300px;height:300px"><p style="color:#999;font-size:12px">Este QR expira en ~20s — la página recarga sola</p></body></html>`);
+  } catch(e) {
+    res.status(500).send('Error generando QR: ' + e.message);
+  }
 });
 
 // Enviar mensaje — endpoint principal usado por todas las apps
