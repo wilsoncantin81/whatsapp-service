@@ -15,9 +15,6 @@ RUN npm install --production
 
 COPY index.js ./
 
-# Volumen para persistir la sesión de WhatsApp
-VOLUME ["/app/auth_info"]
-
 EXPOSE 3000
 
 CMD ["node", "index.js"]
