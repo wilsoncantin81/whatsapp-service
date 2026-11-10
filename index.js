@@ -19,6 +19,21 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const API_SECRET = process.env.API_SECRET || '';
 
+// Si CLEAR_SESSION=true, borra la sesión guardada para forzar nuevo QR
+if (process.env.CLEAR_SESSION === 'true') {
+  const fs = require('fs');
+  const path = require('path');
+  const authDir = '/app/auth_info';
+  try {
+    if (fs.existsSync(authDir)) {
+      fs.rmSync(authDir, { recursive: true, force: true });
+      console.log('🧹 Sesión borrada — se generará QR nuevo');
+    }
+  } catch(e) {
+    console.log('⚠️ No se pudo borrar sesión:', e.message);
+  }
+}
+
 let sock = null;
 let isReady = false;
 let qrString = null;
