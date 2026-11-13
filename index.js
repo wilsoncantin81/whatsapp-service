@@ -14,7 +14,7 @@ const P = require('pino');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '25mb' })); // los PDF llegan en base64
 
 const PORT = process.env.PORT || 3000;
 const API_SECRET = process.env.API_SECRET || '';
@@ -72,6 +72,30 @@ async function sendText(to, message) {
     throw err;
   }
   const sent = await sock.sendMessage(jid, { text: message });
+  rememberSent(sent);
+  return jid;
+}
+
+/** Envía un documento (PDF u otro archivo) con texto opcional como pie */
+async function sendDocument(to, { base64, fileName, mimetype, caption }) {
+  const jid = await resolveJid(to);
+  if (!jid) {
+    const err = new Error('El número no tiene WhatsApp o es inválido');
+    err.status = 400;
+    throw err;
+  }
+  const buffer = Buffer.from(String(base64 || ''), 'base64');
+  if (!buffer.length) {
+    const err = new Error('Documento vacío');
+    err.status = 400;
+    throw err;
+  }
+  const sent = await sock.sendMessage(jid, {
+    document: buffer,
+    mimetype: mimetype || 'application/pdf',
+    fileName: fileName || 'documento.pdf',
+    caption: caption || undefined,
+  });
   rememberSent(sent);
   return jid;
 }
@@ -191,6 +215,22 @@ app.post('/send', authMiddleware, async (req, res) => {
     res.json({ ok: true, to: digits });
   } catch (err) {
     console.error('Error enviando mensaje:', err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Enviar documento (PDF) — body: { to, base64, fileName, mimetype?, caption? }
+app.post('/send-document', authMiddleware, async (req, res) => {
+  const { to, base64, fileName, mimetype, caption } = req.body || {};
+  if (!to || !base64) return res.status(400).json({ error: 'Se requieren "to" y "base64"' });
+  if (!isReady) return res.status(503).json({ error: 'WhatsApp no está conectado aún', qrPending: !!qrString });
+  try {
+    const jid = await sendDocument(to, { base64, fileName, mimetype, caption });
+    const digits = jid.split('@')[0];
+    console.log(`📎 Documento enviado a ${digits}: ${fileName || 'documento'}`);
+    res.json({ ok: true, to: digits });
+  } catch (err) {
+    console.error('Error enviando documento:', err.message);
     res.status(err.status || 500).json({ error: err.message });
   }
 });
